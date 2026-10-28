@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Cattle Corral - North Facility Model</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            user-select: none;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        .btn-action {
+            transition: all 0.2s ease-in-out;
+        }
+        .btn-action:hover {
+            transform: translateY(-1px);
+        }
+        .btn-action:active {
+            transform: translateY(1px);
+        }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div class="absolute top-4 left-4 z-10 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+        <div class="glass-panel p-4 rounded-xl pointer-events-auto">
+            <div class="flex items-center justify-between mb-2">
+                <h1 class="text-lg font-bold text-amber-400 flex items-center gap-2">
+                    North Corral Facility
+                </h1>
+                <span class="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">1:1 Scale (Feet)</span>
+            </div>
+            <p class="text-xs text-slate-300 leading-relaxed mb-3">
+                Updated Layout: Added interactive gate at the Northeast corner of the top blue perimeter fence.
+            </p>
+            
+            <div class="grid grid-cols-2 gap-2 text-xs mb-2">
+                <button id="btn-orbit-mode" class="btn-action bg-amber-600 hover:bg-amber-500 text-white py-2 px-3 rounded-lg font-medium shadow flex items-center justify-center gap-1.5">
+                    Orbit / Overhead
+                </button>
+                <button id="btn-walk-mode" class="btn-action bg-slate-700 hover:bg-slate-600 text-white py-2 px-3 rounded-lg font-medium flex items-center justify-center gap-1.5">
+                    First-Person Walk
+                </button>
+            </div>
+
+            <button id="btn-toggle-all-gates" class="w-full btn-action bg-emerald-600 hover:bg-emerald-500 text-white py-2 px-3 rounded-lg font-medium text-xs shadow flex items-center justify-center gap-1.5">
+                Toggle All Gates Open / Closed
+            </button>
+        </div>
+
+        <div id="walk-instructions" class="glass-panel p-3 rounded-xl pointer-events-auto hidden text-xs text-slate-300">
+            <p class="font-semibold text-amber-300 mb-1 flex items-center justify-between">
+                <span>First-Person Controls</span>
+            </p>
+            <ul class="space-y-1 text-[11px] text-slate-300">
+                <li><strong class="text-white">W, A, S, D</strong> : Walk</li>
+                <li><strong class="text-white">SHIFT</strong> : Sprint</li>
+                <li><strong class="text-white">Left Click</strong> : Click Crosshair on Gate to Toggle</li>
+                <li><strong class="text-white">ESC</strong> : Release Mouse Lock</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="absolute bottom-4 left-4 z-10 flex gap-2 pointer-events-auto">
+        <button id="view-top" class="glass-panel hover:bg-slate-700/80 text-xs px-3 py-2 rounded-lg font-medium border border-slate-600 text-slate-200 btn-action">
+            Top-Down Overview
+        </button>
+        <button id="view-iso" class="glass-panel hover:bg-slate-700/80 text-xs px-3 py-2 rounded-lg font-medium border border-slate-600 text-slate-200 btn-action">
+            3D Isometric
+        </button>
+        <button id="view-chute" class="glass-panel hover:bg-slate-700/80 text-xs px-3 py-2 rounded-lg font-medium border border-slate-600 text-slate-200 btn-action">
+            45° Chute & Alley
+        </button>
+        <button id="view-wing" class="glass-panel hover:bg-slate-700/80 text-xs px-3 py-2 rounded-lg font-medium border border-slate-600 text-slate-200 btn-action">
+            North Funnel Wing
+        </button>
+    </div>
+
+    <div id="crosshair" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none hidden z-20">
+        <div class="w-3 h-3 rounded-full border border-amber-400/80 bg-amber-400/30"></div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+        let currentMode = 'orbit';
+        let pipeMaterial, perimeterFenceMat, gateMaterial, chuteFrameMat, chuteAccentMat, headgateMat, rubberMat, wingMat;
+        const gateObjects = [];
+        const interactiveMeshes = [];
+        let allGatesOpen = false;
+
+        const container = document.getElementById('canvas-container');
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb);
+
+        const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1200);
+        
+        const orbitControls = new OrbitControls(camera, renderer.domElement);
+        orbitControls.enableDamping = true;
+        orbitControls.dampingFactor = 0.05;
+
+        const walkControls = new PointerLockControls(camera, document.body);
+
+        function setIsometricView() {
+            camera.position.set(70, 180, 240);
+            orbitControls.target.set(70, 0, 70);
+            orbitControls.update();
+        }
+        setIsometricView();
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+
+        const sunLight = new THREE.DirectionalLight(0xfff5e6, 1.25);
+        sunLight.position.set(150, 200, 100);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 2048;
+        sunLight.shadow.mapSize.height = 2048;
+        sunLight.shadow.camera.near = 0.5;
+        sunLight.shadow.camera.far = 500;
+        const d = 200;
+        sunLight.shadow.camera.left = -d;
+        sunLight.shadow.camera.right = d;
+        sunLight.shadow.camera.top = d;
+        sunLight.shadow.camera.bottom = -d;
+        scene.add(sunLight);
+
+        // Materials
+        pipeMaterial = new THREE.MeshStandardMaterial({ color: 0x222831, metalness: 0.6, roughness: 0.4 });
+        perimeterFenceMat = new THREE.MeshStandardMaterial({ color: 0x3b82f6, metalness: 0.4, roughness: 0.5 });
+        gateMaterial = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.8, roughness: 0.3 });
+        chuteFrameMat = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.35, metalness: 0.4 });
+        chuteAccentMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.3, metalness: 0.8 });
+        headgateMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.25, metalness: 0.85 });
+        rubberMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.95 });
+        wingMat = new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.4, metalness: 0.5 });
+
+        // Terrain & Roadway
+        const groundMesh = new THREE.Mesh(
+            new THREE.PlaneGeometry(600, 600),
+            new THREE.MeshStandardMaterial({ color: 0x5a7043, roughness: 0.95 })
+        );
+        groundMesh.rotation.x = -Math.PI / 2;
+        groundMesh.receiveShadow = true;
+        scene.add(groundMesh);
+
+        // Gravel Road curve along bottom right
+        const roadCurve = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(-80, 0.05, 230),
+            new THREE.Vector3(50, 0.05, 220),
+            new THREE.Vector3(180, 0.05, 200),
+            new THREE.Vector3(220, 0.05, 120),
+            new THREE.Vector3(210, 0.05, -50)
+        ]);
+        const roadGeo = new THREE.TubeGeometry(roadCurve, 64, 10, 8, false);
+        const roadMesh = new THREE.Mesh(roadGeo, new THREE.MeshStandardMaterial({ color: 0xc2b280, roughness: 0.9 }));
+        roadMesh.scale.set(1, 0.02, 1);
+        roadMesh.position.y = 0.01;
+        scene.add(roadMesh);
+
+        const groundGrid = new THREE.GridHelper(300, 30, 0x000000, 0x334155);
+        groundGrid.position.set(70, 0.02, 60);
+        groundGrid.material.opacity = 0.25;
+        groundGrid.material.transparent = true;
+        scene.add(groundGrid);
+
+        const fenceGroup = new THREE.Group();
+        scene.add(fenceGroup);
+
+        function createFencePanel(x1, z1, x2, z2, height = 5.5, rails = 5, mat = pipeMaterial) {
+            const dx = x2 - x1;
+            const dz = z2 - z1;
+            const length = Math.hypot(dx, dz);
+            if (length < 0.05) return;
+
+            const angle = Math.atan2(dz, dx);
+            const group = new THREE.Group();
+
+            const railRadius = 0.12;
+            const railGeo = new THREE.CylinderGeometry(railRadius, railRadius, length, 8);
+
+            for (let r = 0; r < rails; r++) {
+                const rail = new THREE.Mesh(railGeo, mat);
+                rail.rotation.z = Math.PI / 2;
+                rail.position.set(0, (height / (rails + 1)) * (r + 1), 0);
+                rail.castShadow = true;
+                group.add(rail);
+            }
+
+            const postCount = Math.max(2, Math.ceil(length / 8) + 1);
+            const postGeo = new THREE.CylinderGeometry(0.2, 0.2, height + 0.5, 12);
+
+            for (let p = 0; p < postCount; p++) {
+                const post = new THREE.Mesh(postGeo, mat);
+                const posOnLine = -length / 2 + (p / (postCount - 1)) * length;
+                post.position.set(posOnLine, (height + 0.5) / 2, 0);
+                post.castShadow = true;
+                group.add(post);
+            }
+
+            group.position.set((x1 + x2) / 2, 0, (z1 + z2) / 2);
+            group.rotation.y = -angle;
+            fenceGroup.add(group);
+        }
+
+        function createHingedGate(x1, z1, x2, z2, label = "Gate", swingDirection = -1) {
+            const dx = x2 - x1;
+            const dz = z2 - z1;
+            const length = Math.hypot(dx, dz);
+            const baseAngle = Math.atan2(dz, dx);
+
+            const pivotGroup = new THREE.Group();
+            pivotGroup.position.set(x1, 0, z1);
+            pivotGroup.rotation.y = -baseAngle;
+
+            const postGeo = new THREE.CylinderGeometry(0.35, 0.35, 6.5, 16);
+            const hingePost = new THREE.Mesh(postGeo, new THREE.MeshStandardMaterial({ color: 0x334155 }));
+            hingePost.position.set(0, 3.25, 0);
+            hingePost.castShadow = true;
+            pivotGroup.add(hingePost);
+
+            const leafGroup = new THREE.Group();
+            const frameRadius = 0.16;
+            const topBarGeo = new THREE.CylinderGeometry(frameRadius, frameRadius, Math.max(0.2, length - 0.4));
+            
+            const topBar = new THREE.Mesh(topBarGeo, gateMaterial);
+            topBar.rotation.z = Math.PI / 2;
+            topBar.position.set(length / 2, 5.2, 0);
+            leafGroup.add(topBar);
+
+            const botBar = topBar.clone();
+            botBar.position.y = 1.0;
+            leafGroup.add(botBar);
+
+            for (let r = 1; r <= 3; r++) {
+                const rail = new THREE.Mesh(topBarGeo, gateMaterial);
+                rail.rotation.z = Math.PI / 2;
+                rail.position.set(length / 2, 1.0 + (4.2 / 4) * r, 0);
+                leafGroup.add(rail);
+            }
+
+            const hitBoxGeo = new THREE.BoxGeometry(length, 6.0, 1.8);
+            const hitBoxMat = new THREE.MeshBasicMaterial({ visible: false });
+            const hitBox = new THREE.Mesh(hitBoxGeo, hitBoxMat);
+            hitBox.position.set(length / 2, 3.0, 0);
+            leafGroup.add(hitBox);
+
+            pivotGroup.add(leafGroup);
+
+            const gateObj = {
+                pivotGroup,
+                leafGroup,
+                hitBox,
+                isOpen: false,
+                currentAngle: 0,
+                targetAngle: 0,
+                baseAngle,
+                swingDirection,
+                label
+            };
+
+            hitBox.userData.gateObj = gateObj;
+            interactiveMeshes.push(hitBox);
+            gateObjects.push(gateObj);
+            fenceGroup.add(pivotGroup);
+        }
+
+        // SQUEEZE CHUTE FUNCTION
+        function createSqueezeChute(centerX, centerZ, rotationY = 0) {
+            const chuteGroup = new THREE.Group();
+            const length = 12.0;
+            const height = 6.8;
+            const topWidth = 3.6;
+            const bottomWidth = 2.2;
+
+            const skidGeo = new THREE.BoxGeometry(topWidth + 0.6, 0.4, length + 0.8);
+            const skidMesh = new THREE.Mesh(skidGeo, chuteAccentMat);
+            skidMesh.position.set(0, 0.2, 0);
+            skidMesh.castShadow = true;
+            chuteGroup.add(skidMesh);
+
+            const floorMesh = new THREE.Mesh(
+                new THREE.BoxGeometry(bottomWidth, 0.15, length),
+                new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8, metalness: 0.5 })
+            );
+            floorMesh.position.set(0, 0.45, 0);
+            chuteGroup.add(floorMesh);
+
+            const cornerPostGeo = new THREE.BoxGeometry(0.35, height, 0.35);
+            const cornerPositions = [
+                [-topWidth / 2, height / 2, -length / 2],
+                [topWidth / 2, height / 2, -length / 2],
+                [-topWidth / 2, height / 2, length / 2],
+                [topWidth / 2, height / 2, length / 2]
+            ];
+
+            cornerPositions.forEach(pos => {
+                const post = new THREE.Mesh(cornerPostGeo, chuteFrameMat);
+                post.position.set(pos[0], pos[1], pos[2]);
+                post.castShadow = true;
+                chuteGroup.add(post);
+            });
+
+            const crossBeamTop = new THREE.Mesh(
+                new THREE.BoxGeometry(topWidth, 0.35, 0.35),
+                chuteFrameMat
+            );
+            crossBeamTop.position.set(0, height - 0.18, -length / 2);
+            chuteGroup.add(crossBeamTop);
+
+            const crossBeamBack = crossBeamTop.clone();
+            crossBeamBack.position.z = length / 2;
+            chuteGroup.add(crossBeamBack);
+
+            [-1, 1].forEach(side => {
+                const sideWallGroup = new THREE.Group();
+                const lowerPanel = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.12, 2.2, length - 0.8),
+                    chuteFrameMat
+                );
+                lowerPanel.position.set(side * (bottomWidth / 2 + 0.1), 1.6, 0);
+                lowerPanel.rotation.z = side * -0.12;
+                lowerPanel.castShadow = true;
+                sideWallGroup.add(lowerPanel);
+
+                const sidePipeGeo = new THREE.CylinderGeometry(0.08, 0.08, length - 0.8, 10);
+                for (let r = 0; r < 4; r++) {
+                    const pipe = new THREE.Mesh(sidePipeGeo, chuteAccentMat);
+                    pipe.rotation.x = Math.PI / 2;
+                    pipe.position.set(side * (bottomWidth / 2 + 0.25 + (r * 0.12)), 3.0 + (r * 0.85), 0);
+                    pipe.castShadow = true;
+                    sideWallGroup.add(pipe);
+                }
+                chuteGroup.add(sideWallGroup);
+            });
+
+            // Headgate
+            const headgateFrame = new THREE.Group();
+            headgateFrame.position.set(0, 0, -length / 2 - 0.2);
+
+            const hgArchTop = new THREE.Mesh(new THREE.BoxGeometry(topWidth + 0.4, 0.4, 0.3), headgateMat);
+            hgArchTop.position.set(0, height, 0);
+            headgateFrame.add(hgArchTop);
+
+            [-0.42, 0.42].forEach(xOffset => {
+                const stanchion = new THREE.Mesh(new THREE.BoxGeometry(0.35, height - 0.8, 0.25), headgateMat);
+                stanchion.position.set(xOffset, height / 2, 0);
+                stanchion.rotation.z = (xOffset > 0 ? -1 : 1) * 0.12;
+                headgateFrame.add(stanchion);
+
+                const rubberPad = new THREE.Mesh(new THREE.BoxGeometry(0.15, height - 1.2, 0.35), rubberMat);
+                rubberPad.position.set(xOffset > 0 ? xOffset - 0.22 : xOffset + 0.22, height / 2, 0);
+                rubberPad.rotation.z = stanchion.rotation.z;
+                headgateFrame.add(rubberPad);
+            });
+
+            chuteGroup.add(headgateFrame);
+
+            chuteGroup.position.set(centerX, 0, centerZ);
+            chuteGroup.rotation.y = rotationY;
+            scene.add(chuteGroup);
+        }
+
+        // BUILD NORTH CORRAL LAYOUT
+        function buildNorthCorralFacility() {
+            // 1. OUTER PASTURE PERIMETER (BLUE BOUNDARY BOXES)
+            // Top Blue Perimeter Fence: Gate at far Northwest corner (X = -60 to -44)
+            createHingedGate(-60, -140, -44, -140, "Northwest Perimeter Gate", 1);
+            createFencePanel(-44, -140, 120, -140, 5.0, 4, perimeterFenceMat);
+            // Interactive Gate at Northeast corner of top perimeter fence (X = 120 to 140, Z = -140)
+            createHingedGate(120, -140, 140, -140, "Northeast Perimeter Gate", 1);
+
+            // Rest of Perimeter Boundary Walls
+            createFencePanel(-60, -140, -60, 113, 5.0, 4, perimeterFenceMat);
+            createFencePanel(-60, 113, 0, 113, 5.0, 4, perimeterFenceMat);
+
+            // East Perimeter Blue Boundary Wall (X = 140, Z = -140 to 20):
+            createFencePanel(140, -140, 140, 6, 5.0, 4, perimeterFenceMat);
+            // Interactive Gate along blue perimeter fence directly adjacent to upper-right corner of East working pens
+            createHingedGate(140, 6, 140, 20, "East Perimeter Gate", 1);
+
+            // 2. ORANGE DIAGONAL LEAD-IN WING FENCE
+            createHingedGate(45, -140, 46.88, -128, "Orange Wing Top Gate", 1);
+            createFencePanel(46.88, -128, 68.12, 8, 6.0, 5, wingMat);
+            createHingedGate(68.12, 8, 70, 20, "Orange Wing Bottom Gate", 1);
+
+            // 3. MAIN WORKING CORRAL GRID
+            const xL = 10, xR = 140, zT = 20, zB = 120;
+
+            createFencePanel(xL, zT, 70, zT);
+
+            // Upper West Pen Back Wall (xL = 10, Z=20 to Z=85 continuous pipe fence):
+            createFencePanel(xL, zT, xL, 85);
+
+            createFencePanel(xR, zT, xR, zB);
+            createFencePanel(xL, zB, 70, zB);
+            createFencePanel(70, zB, xR, zB);
+
+            // 4. CENTRAL ALLEYWAY (Runs N-S at X = 70 to 82)
+            const xA1 = 70, xA2 = 82;
+            
+            // Central Alley Top Entry Gate across Z = 20
+            createHingedGate(xA1, 20, xA2, 20, "Top Central Alley Entry Gate", 1);
+
+            // West alley wall:
+            createHingedGate(xA1, 20, xA1, 38, "Upper Alley Cut Gate", 1);
+            createFencePanel(xA1, 38, xA1, 50);
+            createHingedGate(xA1, 62.5, xA1, 75, "Lower Alley Cut Gate", 1);
+            createFencePanel(xA1, 75, xA1, 95);
+
+            // East alley wall with continuous top panel and 2 lower cut gates:
+            createFencePanel(xA2, 20, xA2, 50);
+            
+            createHingedGate(xA2, 50, xA2, 60, "East Alley Cut Gate Mid (10ft)", -1);
+            createFencePanel(xA2, 60, xA2, 75);
+
+            createHingedGate(xA2, 75, xA2, 85, "East Alley Cut Gate Lower (10ft)", -1);
+            createFencePanel(xA2, 85, xA2, 95);
+
+            // Alley Cross Gate at Z=62.5
+            createHingedGate(xA1, 62.5, xA2, 62.5, "Central Alley Cross Gate", 1);
+
+            // Exit Gate at bottom of Central Alleyway
+            createHingedGate(xA1, 95, xA2, 95, "Alley Bottom Exit Gate", 1);
+
+            // 5. WEST PENS - HORIZONTAL DIVIDERS & PARTITIONS
+            // Divider 1 (Z = 50): Interactive gate hinged at X = 22, Z = 50
+            createHingedGate(22, 50, 10, 50, "Upper West Pen Outer Divider Gate", -1);
+            createFencePanel(22, 50, xA1, 50);
+
+            // Divider 2 (Z = 62.5)
+            createHingedGate(22, 62.5, 10, 62.5, "West Pen 2 Outer Gate", 1);
+            createFencePanel(22, 62.5, xA1, 62.5);
+
+            // Divider 3 (Z = 75): Solid partition from X = 22 to Alley Wall
+            createFencePanel(22, 75, xA1, 75);
+
+            // Vertical Inner Wall (X = 22):
+            // Interactive gate connecting Z = 50 to Z = 62.5
+            createHingedGate(22, 50, 22, 62.5, "West Inner Alley Partition Gate", 1);
+            createFencePanel(22, 75, 22, 87);
+
+            // 6. EAST PENS (Horizontal Dividers & Gates)
+            // Upper East Pen Top Wall (Z = 20, X = 82 to 140):
+            createHingedGate(xA2, 20, xA2 + 12, 20, "Upper East Pen Alley End Gate", 1);
+            createFencePanel(xA2 + 12, 20, 128, 20);
+            createHingedGate(128, 20, xR, 20, "Upper East Pen Corner Gate", 1);
+
+            // Middle East Pen Divider (Z = 50):
+            createHingedGate(xA2, 50, xA2 + 10, 50, "East Pen Mid Gate", 1);
+            createFencePanel(xA2 + 10, 50, xR, 50);
+
+            // Lower East Pen Divider (Z = 75):
+            createHingedGate(xA2, 75, xA2 + 10, 75, "East Pen Lower Gate", 1);
+            createFencePanel(xA2 + 10, 75, xR, 75);
+
+            // 7. SQUEEZE CHUTE AT 45 DEGREE ANGLE
+            const chuteX = 24;
+            const chuteZ = 102;
+            const chuteAngle = -Math.PI * 0.75;
+            createSqueezeChute(chuteX, chuteZ, chuteAngle);
+
+            // 8. ALLEYWAY V-SPLIT FORK
+            const alleyRightOuterCurve = new THREE.CubicBezierCurve3(
+                new THREE.Vector3(82, 0, 95),
+                new THREE.Vector3(82, 0, 120),
+                new THREE.Vector3(55, 0, 120),
+                new THREE.Vector3(0, 0, 120)
+            );
+            const outerPts = alleyRightOuterCurve.getPoints(16);
+            for (let i = 0; i < outerPts.length - 1; i++) {
+                createFencePanel(outerPts[i].x, outerPts[i].z, outerPts[i + 1].x, outerPts[i + 1].z);
+            }
+
+            const alleyInnerCurve = new THREE.CubicBezierCurve3(
+                new THREE.Vector3(70, 0, 95),
+                new THREE.Vector3(70, 0, 110),
+                new THREE.Vector3(58, 0, 110),
+                new THREE.Vector3(52, 0, 110)
+            );
+            const innerPts = alleyInnerCurve.getPoints(10);
+            for (let i = 0; i < innerPts.length - 1; i++) {
+                createFencePanel(innerPts[i].x, innerPts[i].z, innerPts[i + 1].x, innerPts[i + 1].z);
+            }
+
+            const loadOutBranchCurve = new THREE.CubicBezierCurve3(
+                new THREE.Vector3(52, 0, 114),
+                new THREE.Vector3(38, 0, 114),
+                new THREE.Vector3(22, 0, 113),
+                new THREE.Vector3(0, 0, 113)
+            );
+            const loadPts = loadOutBranchCurve.getPoints(12);
+            for (let i = 0; i < loadPts.length - 1; i++) {
+                createFencePanel(loadPts[i].x, loadPts[i].z, loadPts[i + 1].x, loadPts[i + 1].z);
+            }
+
+            createHingedGate(52, 110, 52, 114, "V-Split Diverter Cut Gate", 1);
+
+            const yellowFunnelCurve = new THREE.CubicBezierCurve3(
+                new THREE.Vector3(52, 0, 110),
+                new THREE.Vector3(42, 0, 110),
+                new THREE.Vector3(34, 0, 108.5),
+                new THREE.Vector3(26.8, 0, 107.5)
+            );
+            const funnelPts = yellowFunnelCurve.getPoints(10);
+            for (let i = 0; i < funnelPts.length - 1; i++) {
+                createFencePanel(funnelPts[i].x, funnelPts[i].z, funnelPts[i + 1].x, funnelPts[i + 1].z);
+            }
+
+            createHingedGate(xL, 85, xL, 95, "Chute Discharge Outer Exit Gate", 1);
+        }
+
+        buildNorthCorralFacility();
+
+        // INTERACTION & RAYCASTING
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let mouseDownPos = { x: 0, y: 0 };
+
+        window.addEventListener('mousedown', (e) => {
+            mouseDownPos = { x: e.clientX, y: e.clientY };
+        });
+
+        function performGateToggle(event) {
+            if (currentMode === 'orbit') {
+                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                raycaster.setFromCamera(mouse, camera);
+            } else if (currentMode === 'walk' && walkControls.isLocked) {
+                raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            } else {
+                return;
+            }
+
+            const intersects = raycaster.intersectObjects(interactiveMeshes, false);
+            if (intersects.length > 0) {
+                const gateObj = intersects[0].object.userData.gateObj;
+                if (gateObj) {
+                    gateObj.isOpen = !gateObj.isOpen;
+                    gateObj.targetAngle = gateObj.isOpen ? (Math.PI / 2) * gateObj.swingDirection : 0;
+                }
+            }
+        }
+
+        window.addEventListener('mouseup', (event) => {
+            const deltaX = Math.abs(event.clientX - mouseDownPos.x);
+            const deltaY = Math.abs(event.clientY - mouseDownPos.y);
+
+            if (deltaX < 5 && deltaY < 5) {
+                performGateToggle(event);
+            }
+        });
+
+        window.addEventListener('mousemove', (event) => {
+            if (currentMode === 'orbit') {
+                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObjects(interactiveMeshes, false);
+                document.body.style.cursor = intersects.length > 0 ? 'pointer' : 'default';
+            }
+        });
+
+        // VIEW CONTROLS
+        const btnOrbit = document.getElementById('btn-orbit-mode');
+        const btnWalk = document.getElementById('btn-walk-mode');
+        const walkInst = document.getElementById('walk-instructions');
+        const crosshair = document.getElementById('crosshair');
+
+        function setCameraMode(mode) {
+            currentMode = mode;
+            if (mode === 'orbit') {
+                walkControls.unlock();
+                orbitControls.enabled = true;
+                btnOrbit.className = "btn-action bg-amber-600 hover:bg-amber-500 text-white py-2 px-3 rounded-lg font-medium shadow flex items-center justify-center gap-1.5";
+                btnWalk.className = "btn-action bg-slate-700 hover:bg-slate-600 text-white py-2 px-3 rounded-lg font-medium flex items-center justify-center gap-1.5";
+                walkInst.classList.add('hidden');
+                crosshair.classList.add('hidden');
+            } else {
+                orbitControls.enabled = false;
+                walkControls.lock();
+                document.body.style.cursor = 'default';
+                btnWalk.className = "btn-action bg-amber-600 hover:bg-amber-500 text-white py-2 px-3 rounded-lg font-medium shadow flex items-center justify-center gap-1.5";
+                btnOrbit.className = "btn-action bg-slate-700 hover:bg-slate-600 text-white py-2 px-3 rounded-lg font-medium flex items-center justify-center gap-1.5";
+                walkInst.classList.remove('hidden');
+                crosshair.classList.remove('hidden');
+
+                camera.position.set(75, 5.5, 110);
+                camera.lookAt(75, 5.5, 20);
+            }
+        }
+
+        btnOrbit.addEventListener('click', () => setCameraMode('orbit'));
+        btnWalk.addEventListener('click', () => setCameraMode('walk'));
+
+        walkControls.addEventListener('unlock', () => {
+            if (currentMode === 'walk') {
+                setCameraMode('orbit');
+            }
+        });
+
+        renderer.domElement.addEventListener('click', () => {
+            if (currentMode === 'walk' && !walkControls.isLocked) {
+                walkControls.lock();
+            }
+        });
+
+        document.getElementById('btn-toggle-all-gates').addEventListener('click', () => {
+            allGatesOpen = !allGatesOpen;
+            gateObjects.forEach(g => {
+                g.isOpen = allGatesOpen;
+                g.targetAngle = g.isOpen ? (Math.PI / 2) * g.swingDirection : 0;
+            });
+        });
+
+        document.getElementById('view-top').addEventListener('click', () => {
+            setCameraMode('orbit');
+            camera.position.set(70, 280, 20.1);
+            orbitControls.target.set(70, 0, 20);
+            orbitControls.update();
+        });
+
+        document.getElementById('view-iso').addEventListener('click', () => {
+            setCameraMode('orbit');
+            setIsometricView();
+        });
+
+        document.getElementById('view-chute').addEventListener('click', () => {
+            setCameraMode('orbit');
+            camera.position.set(50, 30, 140);
+            orbitControls.target.set(24, 3, 102);
+            orbitControls.update();
+        });
+
+        document.getElementById('view-wing').addEventListener('click', () => {
+            setCameraMode('orbit');
+            camera.position.set(50, 60, -120);
+            orbitControls.target.set(70, 0, 10);
+            orbitControls.update();
+        });
+
+        // WASD MOVEMENT
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false, isSprinting = false;
+        const moveVelocity = new THREE.Vector3();
+        const moveDirection = new THREE.Vector3();
+
+        const onKeyDown = (event) => {
+            switch (event.code) {
+                case 'KeyW': case 'ArrowUp': moveForward = true; break;
+                case 'KeyA': case 'ArrowLeft': moveLeft = true; break;
+                case 'KeyS': case 'ArrowDown': moveBackward = true; break;
+                case 'KeyD': case 'ArrowRight': moveRight = true; break;
+                case 'ShiftLeft': case 'ShiftRight': isSprinting = true; break;
+            }
+        };
+
+        const onKeyUp = (event) => {
+            switch (event.code) {
+                case 'KeyW': case 'ArrowUp': moveForward = false; break;
+                case 'KeyA': case 'ArrowLeft': moveLeft = false; break;
+                case 'KeyS': case 'ArrowDown': moveBackward = false; break;
+                case 'KeyD': case 'ArrowRight': moveRight = false; break;
+                case 'ShiftLeft': case 'ShiftRight': isSprinting = false; break;
+            }
+        };
+
+        document.addEventListener('keydown', onKeyDown);
+        document.addEventListener('keyup', onKeyUp);
+
+        let prevTime = performance.now();
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = performance.now();
+            const delta = Math.min((time - prevTime) / 1000, 0.1);
+
+            gateObjects.forEach(g => {
+                if (Math.abs(g.currentAngle - g.targetAngle) > 0.01) {
+                    g.currentAngle += (g.targetAngle - g.currentAngle) * delta * 5.0;
+                    g.leafGroup.rotation.y = g.currentAngle;
+                }
+            });
+
+            if (currentMode === 'walk' && walkControls.isLocked) {
+                moveVelocity.x -= moveVelocity.x * 10.0 * delta;
+                moveVelocity.z -= moveVelocity.z * 10.0 * delta;
+
+                moveDirection.z = Number(moveForward) - Number(moveBackward);
+                moveDirection.x = Number(moveRight) - Number(moveLeft);
+                moveDirection.normalize();
+
+                const speed = isSprinting ? 220.0 : 120.0;
+                if (moveForward || moveBackward) moveVelocity.z -= moveDirection.z * speed * delta;
+                if (moveLeft || moveRight) moveVelocity.x -= moveDirection.x * speed * delta;
+
+                walkControls.moveRight(-moveVelocity.x * delta);
+                walkControls.moveForward(-moveVelocity.z * delta);
+                camera.position.y = 5.5;
+            } else if (currentMode === 'orbit') {
+                orbitControls.update();
+            }
+
+            prevTime = time;
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
